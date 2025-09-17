@@ -48,6 +48,18 @@ class PermanentTransitorySimulator:
 
         # Transitory shocks e_it
         e = torch.sqrt(torch.tensor(self.var_e)) * torch.randn(N, T)
+        # Transitory shocks e_it lagged
+        e_lag = torch.cat([torch.zeros(N, 1), e[:, :-1]],
+                          dim=1)  # shape (N, T)
+
+        # Generate permanent component p_it = p_it-1 + u_it
+        p = torch.zeros(N, T)
+        p[:, 0] = p_initial.squeeze() + u[:, 0]
+        for t in range(1, T):
+            p[:, t] = self.rho * p[:, t-1] + u[:, t]
+
+        # Generate earnings y_it = alpha_i + p_it + e_it
+        y = alpha + p + e + e_lag
 
         # Generate permanent component p_it = p_it-1 + u_it
         p = torch.zeros(N, T)
@@ -75,7 +87,6 @@ class PermanentTransitoryEstimator(nn.Module):
         self.log_var_p1 = nn.Parameter(torch.tensor(0.0))
         self.log_theta = nn.Parameter(torch.tensor(0.0))
 
-
     @property
     def var_e(self):
         return torch.exp(self.log_var_e)
@@ -87,13 +98,10 @@ class PermanentTransitoryEstimator(nn.Module):
     @property
     def var_p1(self):
         return torch.exp(self.log_var_p1)
-    
 
     @property
     def theta(self):
         return torch.exp(self.log_theta)
-    
-    
 
     def theoretical_moments(self, T: int) -> Dict[str, torch.Tensor]:
         """
@@ -103,10 +111,11 @@ class PermanentTransitoryEstimator(nn.Module):
         moments = {}
 
         # Variance of growth: Var(Δy_it) = var_u + 2*var_e
-        moments['var_growth'] = self.var_u + 2 *(self.theta**2 - self.theta + 1)* self.var_e 
+        moments['var_growth'] = self.var_u + 2 * \
+            (self.theta**2 - self.theta + 1) * self.var_e
 
         # First autocovariance: Cov(Δy_it, Δy_it-1) = -var_e
-        moments['cov1_growth'] = - ( 1 - self.theta**2 )* self.var_e
+        moments['cov1_growth'] = - (1 - self.theta**2) * self.var_e
 
         moments['cov2_growth'] = -self.var_e * self.theta
 
@@ -188,8 +197,8 @@ def estimate_model(y_data: torch.Tensor, lr: float = 0.01, max_iter: int = 1000)
     estimates = {
         'var_e': model.var_e.item(),
         'var_u': model.var_u.item(),
-        'var_p1': model.var_p1.item(), 
-        'theta' : model.theta.item()
+        'var_p1': model.var_p1.item(),
+        'theta': model.theta.item()
     }
 
     return estimates, loss_history
@@ -202,8 +211,8 @@ if __name__ == "__main__":
     true_params = {
         'var_e': 0.5,
         'var_u': 0.3,
-        'var_p1': 0.8, 
-        'theta':0.6
+        'var_p1': 0.8,
+        'theta': 0.6
     }
 
     # Simulate data
