@@ -61,15 +61,6 @@ class PermanentTransitorySimulator:
         # Generate earnings y_it = alpha_i + p_it + e_it
         y = alpha + p + e + e_lag
 
-        # Generate permanent component p_it = p_it-1 + u_it
-        p = torch.zeros(N, T)
-        p[:, 0] = p_initial.squeeze() + u[:, 0]
-        for t in range(1, T):
-            p[:, t] = self.rho * p[:, t-1] + u[:, t]
-
-        # Generate earnings y_it = alpha_i + p_it + e_it
-        y = alpha + p + e + self.theta*np.concatenate([[0], e[:-1]])
-
         return y
 
 
