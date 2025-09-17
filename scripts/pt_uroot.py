@@ -7,22 +7,24 @@ from typing import Tuple, Dict
 class PermanentTransitorySimulator:
     """
     Simulates data from permanent transitory earnings model:
-    y_it = alpha_i + p_it + e_it
-    p_it = p_it-1 + u_it
+    y_it = alpha_i + p_it + e_it + theta * e_it-1
+    p_it = rho*p_it-1 + u_it
     """
 
-    def __init__(self, var_e: float, var_u: float, var_p1: float, rho: float = 1.0):
+    def __init__(self, var_e: float, var_u: float, var_p1: float, theta: float, rho: float = 1.0):
         """
         Parameters:
         - var_e: variance of transitory component e_it
         - var_u: variance of permanent shock u_it
         - var_p1: variance of initial permanent component p_i1
         - rho: persistence parameter (fixed at 1.0 for unit root)
+        - theta: impact of previous transitory shock 
         """
         self.var_e = var_e
         self.var_u = var_u
         self.var_p1 = var_p1
         self.rho = rho
+        self.theta = theta
 
     def simulate(self, N: int, T: int, seed: int = None) -> torch.Tensor:
         """
@@ -54,7 +56,7 @@ class PermanentTransitorySimulator:
             p[:, t] = self.rho * p[:, t-1] + u[:, t]
 
         # Generate earnings y_it = alpha_i + p_it + e_it
-        y = alpha + p + e
+        y = alpha + p + e + self.theta*np.concatenate([[0], e[:-1]])
 
         return y
 
@@ -71,6 +73,8 @@ class PermanentTransitoryEstimator(nn.Module):
         self.log_var_e = nn.Parameter(torch.tensor(0.0))
         self.log_var_u = nn.Parameter(torch.tensor(0.0))
         self.log_var_p1 = nn.Parameter(torch.tensor(0.0))
+        self.log_theta = nn.Parameter(torch.tensor(0.0))
+
 
     @property
     def var_e(self):
@@ -83,6 +87,13 @@ class PermanentTransitoryEstimator(nn.Module):
     @property
     def var_p1(self):
         return torch.exp(self.log_var_p1)
+    
+
+    @property
+    def theta(self):
+        return torch.exp(self.log_theta)
+    
+    
 
     def theoretical_moments(self, T: int) -> Dict[str, torch.Tensor]:
         """
@@ -92,13 +103,15 @@ class PermanentTransitoryEstimator(nn.Module):
         moments = {}
 
         # Variance of growth: Var(Δy_it) = var_u + 2*var_e
-        moments['var_growth'] = self.var_u + 2 * self.var_e
+        moments['var_growth'] = self.var_u + 2 *(self.theta**2 - self.theta + 1)* self.var_e 
 
         # First autocovariance: Cov(Δy_it, Δy_it-1) = -var_e
-        moments['cov1_growth'] = -self.var_e
+        moments['cov1_growth'] = - ( 1 - self.theta**2 )* self.var_e
+
+        moments['cov2_growth'] = -self.var_e * self.theta
 
         # Higher order autocovariances are zero
-        for lag in range(2, T):
+        for lag in range(3, T):
             moments[f'cov{lag}_growth'] = torch.tensor(0.0)
 
         return moments
@@ -121,7 +134,7 @@ class PermanentTransitoryEstimator(nn.Module):
         for lag in range(1, min(T-1, 10)):  # Limit lags for efficiency
             if growth.shape[1] > lag:
                 cov = torch.mean((growth[:, lag:] - torch.mean(growth[:, lag:])) *
-                               (growth[:, :-lag] - torch.mean(growth[:, :-lag])))
+                                 (growth[:, :-lag] - torch.mean(growth[:, :-lag])))
                 moments[f'cov{lag}_growth'] = cov
             else:
                 moments[f'cov{lag}_growth'] = torch.tensor(0.0)
@@ -175,7 +188,8 @@ def estimate_model(y_data: torch.Tensor, lr: float = 0.01, max_iter: int = 1000)
     estimates = {
         'var_e': model.var_e.item(),
         'var_u': model.var_u.item(),
-        'var_p1': model.var_p1.item()
+        'var_p1': model.var_p1.item(), 
+        'theta' : model.theta.item()
     }
 
     return estimates, loss_history
@@ -188,7 +202,8 @@ if __name__ == "__main__":
     true_params = {
         'var_e': 0.5,
         'var_u': 0.3,
-        'var_p1': 0.8
+        'var_p1': 0.8, 
+        'theta':0.6
     }
 
     # Simulate data
